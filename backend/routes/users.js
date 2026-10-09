@@ -45,6 +45,7 @@ router.get('/:username', optionalAuth, (req, res) => {
       displayName: user.display_name,
       bio: user.bio,
       avatarColor: user.avatar_color,
+      plan: user.plan,
       createdAt: user.created_at,
       followerCount,
       followingCount,
@@ -76,6 +77,36 @@ router.post('/:username/follow', requireAuth, (req, res) => {
   const payload = { username: target.username, following, followerCount };
   req.app.get('io').emit('follow_changed', payload);
   res.json(payload);
+});
+
+// Update your own settings: phone number (needed for SMS OTP flows) and
+// whether keyword-match browser notifications are enabled.
+router.patch('/me/settings', requireAuth, (req, res) => {
+  const { phone, notificationsEnabled } = req.body || {};
+  const PHONE_RE = /^\+?[0-9]{7,15}$/;
+
+  if (phone !== undefined && phone !== null && phone !== '' && !PHONE_RE.test(phone)) {
+    return res.status(400).json({ error: 'phone must be digits only, optionally starting with +' });
+  }
+
+  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const nextPhone = phone !== undefined ? (phone || null) : current.phone;
+  const nextNotifications =
+    notificationsEnabled !== undefined ? (notificationsEnabled ? 1 : 0) : current.notifications_enabled;
+
+  db.prepare('UPDATE users SET phone = ?, notifications_enabled = ? WHERE id = ?').run(
+    nextPhone,
+    nextNotifications,
+    req.user.id
+  );
+
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({
+    user: {
+      phone: updated.phone,
+      notificationsEnabled: !!updated.notifications_enabled,
+    },
+  });
 });
 
 module.exports = router;

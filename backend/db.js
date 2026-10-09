@@ -13,6 +13,15 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   bio TEXT DEFAULT '',
   avatar_color TEXT DEFAULT '#1d9bf0',
+  email TEXT,
+  phone TEXT,
+  plan TEXT NOT NULL DEFAULT 'free',
+  plan_renews_at TEXT,
+  tweets_posted_date TEXT,
+  tweets_posted_count INTEGER NOT NULL DEFAULT 0,
+  last_password_reset_date TEXT,
+  notifications_enabled INTEGER NOT NULL DEFAULT 1,
+  language TEXT NOT NULL DEFAULT 'en',
   created_at TEXT NOT NULL
 );
 
@@ -20,6 +29,41 @@ CREATE TABLE IF NOT EXISTS posts (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'text',
+  audio_path TEXT,
+  audio_seconds INTEGER,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS otp_codes (
+  id TEXT PRIMARY KEY,
+  purpose TEXT NOT NULL,
+  identifier TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  user_id TEXT,
+  metadata TEXT,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS login_history (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  browser TEXT,
+  os TEXT,
+  device_type TEXT,
+  ip_address TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subscription_payments (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan TEXT NOT NULL,
+  amount_inr INTEGER NOT NULL,
+  stripe_session_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL
 );
 

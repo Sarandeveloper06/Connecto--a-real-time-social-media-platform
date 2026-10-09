@@ -1,9 +1,43 @@
 const express = require('express');
+const path = require('path');
+const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { getPlan } = require('../utils/plans');
+const { verifyOtp, createAndSendOtp } = require('../utils/otp');
+const { isWithinIstWindow } = require('../utils/timeWindow');
 
 const router = express.Router();
+
+const AUDIO_MAX_BYTES = 100 * 1024 * 1024; // 100 MB
+const AUDIO_MAX_SECONDS = 5 * 60; // 5 minutes
+
+const audioStorage = multer.diskStorage({
+  destination: path.join(__dirname, '..', 'uploads', 'audio'),
+  filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname) || '.webm'}`),
+});
+const uploadAudio = multer({ storage: audioStorage, limits: { fileSize: AUDIO_MAX_BYTES } });
+
+// Enforces each plan's daily tweet limit, resetting the counter once the
+// calendar day (server local date) changes. Returns null if allowed, or an
+// error message string if the user is over their plan's limit.
+function checkAndConsumeTweetQuota(user) {
+  const plan = getPlan(user.plan);
+  const today = new Date().toISOString().slice(0, 10);
+  const alreadyToday = user.tweets_posted_date === today ? user.tweets_posted_count : 0;
+
+  if (alreadyToday >= plan.tweetLimit) {
+    return `Your ${plan.label} plan allows ${plan.tweetLimit === Infinity ? 'unlimited' : plan.tweetLimit} tweet(s) per day. Upgrade your plan to post more.`;
+  }
+
+  db.prepare('UPDATE users SET tweets_posted_date = ?, tweets_posted_count = ? WHERE id = ?').run(
+    today,
+    alreadyToday + 1,
+    user.id
+  );
+  return null;
+}
 
 function serializePost(row, currentUserId) {
   const likeCount = db.prepare('SELECT COUNT(*) c FROM likes WHERE post_id = ?').get(row.id).c;
@@ -14,6 +48,9 @@ function serializePost(row, currentUserId) {
   return {
     id: row.id,
     content: row.content,
+    type: row.type || 'text',
+    audioUrl: row.audio_path ? `/uploads/audio/${row.audio_path}` : null,
+    audioSeconds: row.audio_seconds || null,
     createdAt: row.created_at,
     author: {
       id: row.user_id,
@@ -41,6 +78,10 @@ router.post('/', requireAuth, (req, res) => {
   const { content } = req.body || {};
   if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
   if (content.length > 500) return res.status(400).json({ error: 'content must be 500 characters or fewer' });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const quotaError = checkAndConsumeTweetQuota(user);
+  if (quotaError) return res.status(403).json({ error: quotaError, upgradeRequired: true });
 
   const id = uuidv4();
   const createdAt = new Date().toISOString();
@@ -138,6 +179,67 @@ router.post('/:id/comments', requireAuth, (req, res) => {
   const commentCount = db.prepare('SELECT COUNT(*) c FROM comments WHERE post_id = ?').get(req.params.id).c;
   req.app.get('io').emit('new_comment', { postId: req.params.id, comment, commentCount });
   res.status(201).json({ comment, commentCount });
+});
+
+// --- Audio tweets: step 1 — email OTP required before any upload is accepted. ---
+router.post('/audio/request-otp', requireAuth, async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user.email) return res.status(400).json({ error: 'no email on file for verification' });
+
+  await createAndSendOtp({
+    purpose: 'audio_upload',
+    channel: 'email',
+    identifier: user.email,
+    userId: user.id,
+    subject: 'Your Connecto audio-tweet verification code',
+  });
+  res.json({ otpRequired: true, channel: 'email' });
+});
+
+// --- Audio tweets: step 2 — verify the code, enforce the 2-7 PM IST window,
+// duration (<=5 min) and size (<=100 MB) limits, then save the post. ---
+router.post('/audio', requireAuth, uploadAudio.single('audio'), async (req, res) => {
+  try {
+    const { code, durationSeconds, content } = req.body || {};
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+
+    if (!req.file) return res.status(400).json({ error: 'audio file is required' });
+    if (!code) return res.status(400).json({ error: 'verification code is required' });
+
+    const otpResult = verifyOtp({ purpose: 'audio_upload', identifier: user.email, code });
+    if (!otpResult.valid) return res.status(401).json({ error: 'invalid or expired verification code' });
+
+    if (!isWithinIstWindow(14, 0, 19, 0)) {
+      return res.status(403).json({ error: 'Audio tweets can only be posted between 2:00 PM and 7:00 PM IST' });
+    }
+
+    const seconds = Number(durationSeconds || 0);
+    if (!seconds || seconds > AUDIO_MAX_SECONDS) {
+      return res.status(400).json({ error: 'Audio must be longer than 0 seconds and no more than 5 minutes' });
+    }
+    // multer's limits.fileSize already rejects anything over AUDIO_MAX_BYTES before this point.
+
+    const quotaError = checkAndConsumeTweetQuota(user);
+    if (quotaError) return res.status(403).json({ error: quotaError, upgradeRequired: true });
+
+    const id = uuidv4();
+    const createdAt = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO posts (id, user_id, content, type, audio_path, audio_seconds, created_at)
+       VALUES (?, ?, ?, 'audio', ?, ?, ?)`
+    ).run(id, user.id, content || '', req.file.filename, Math.round(seconds), createdAt);
+
+    const row = db.prepare(`${feedQuery} WHERE posts.id = ?`).get(id);
+    const post = serializePost(row, user.id);
+    req.app.get('io').emit('new_post', post);
+    res.status(201).json({ post });
+  } catch (err) {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Audio file exceeds the 100 MB limit' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'failed to upload audio tweet' });
+  }
 });
 
 module.exports = router;
