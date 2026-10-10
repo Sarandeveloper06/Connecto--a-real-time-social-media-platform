@@ -1,3 +1,4 @@
+
 import { createContext, useContext, useEffect, useState } from 'react';
 import api from '../api';
 
@@ -9,10 +10,12 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
+
     if (!token) {
       setLoading(false);
       return;
     }
+
     api
       .get('/auth/me')
       .then((res) => setUser(res.data.user))
@@ -23,16 +26,29 @@ export function AuthProvider({ children }) {
   }, []);
 
   async function login(username, password) {
-    const res = await api.post('/auth/login', { username, password });
+    const res = await api.post('/auth/login', {
+      username,
+      password,
+    });
+
     localStorage.setItem('token', res.data.token);
     setUser(res.data.user);
+
     return res.data.user;
   }
 
-  async function register(username, password, displayName) {
-    const res = await api.post('/auth/register', { username, password, displayName });
+  async function register(username, password, displayName, email, phone) {
+    const res = await api.post('/auth/register', {
+      username,
+      password,
+      displayName,
+      email,
+      phone: phone || '',
+    });
+
     localStorage.setItem('token', res.data.token);
     setUser(res.data.user);
+
     return res.data.user;
   }
 
@@ -42,7 +58,9 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -50,6 +68,10 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+
+  if (!ctx) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
+
   return ctx;
 }
