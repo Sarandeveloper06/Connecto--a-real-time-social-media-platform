@@ -1,4 +1,3 @@
-```json
 {
   "name": "connecto-backend",
   "version": "1.0.0",
@@ -29,4 +28,3 @@
     "ua-parser-js": "^1.0.39"
   }
 }
-```
