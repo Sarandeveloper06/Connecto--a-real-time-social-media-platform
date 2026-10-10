@@ -7,11 +7,11 @@
   "engines": {
     "node": "22.x"
   },
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "rebuild:sqlite": "npm rebuild better-sqlite3"
-  },
+"scripts": {
+  "start": "node server.js",
+  "dev": "node server.js",
+  "postinstall": "npm rebuild better-sqlite3"
+},
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.3.0",
