@@ -1,12 +1,17 @@
+```json
 {
   "name": "connecto-backend",
   "version": "1.0.0",
   "description": "Real-time social media platform backend (Express + Socket.io + SQLite)",
   "main": "server.js",
   "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "rebuild:sqlite": "npm rebuild better-sqlite3"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -24,3 +29,4 @@
     "ua-parser-js": "^1.0.39"
   }
 }
+```
